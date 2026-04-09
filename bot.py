@@ -55,6 +55,8 @@ def set_bot_commands_via_api():
         {"command": "reply",         "description": "User ko jawab bhejo (Admin only)"},
         {"command": "pending",       "description": "Pending uploads dekho (Admin only)"},
         {"command": "retrypending",  "description": "Pending uploads abhi retry karo (Admin only)"},
+        {"command": "stop",          "description": "Saare uploads band karo (Admin only)"},
+        {"command": "resume",        "description": "Uploads dobara shuru karo (Admin only)"},
     ]
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
     data = json.dumps({"commands": commands}).encode()
@@ -118,6 +120,9 @@ contact_reply_map = {}
 
 # Contact flow state: user_id -> "premium" | "message"
 contact_state = {}
+
+# Stop flag — agar True hai to naye uploads nahi honge
+stop_flag = False
 
 
 def human_size(num):
@@ -763,6 +768,21 @@ async def botstats_cmd(client, message: Message):
 
 async def process_upload(client, message: Message, status_msg, file_unique_id,
                          title, caption, file_size, size_mb):
+    global stop_flag
+    if stop_flag:
+        active_uploads.pop(file_unique_id, None)
+        queue_positions.pop(file_unique_id, None)
+        try:
+            await status_msg.edit_text(
+                f"🚫 **Upload Roka Gaya!**\n\n"
+                f"📌 `{title}`\n\n"
+                "Admin ne saare uploads band kar diye hain.\n"
+                "Dobara bhejne ke liye `/resume` ka wait karo."
+            )
+        except Exception:
+            pass
+        return
+
     tmp_dir = tempfile.mkdtemp()
     video_path = None
     dl_start = time.time()
