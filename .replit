@@ -32,5 +32,5 @@ localPort = 8080
 externalPort = 80
 
 [deployment]
-deploymentTarget = "vm"
-run = ["python3", "bot.py"]
+deploymentTarget = "cloudrun"
+run = ["sh", "-c", "Python bot.py"]
