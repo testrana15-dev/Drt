@@ -52,6 +52,7 @@ def set_bot_commands_via_api():
         {"command": "removepremium", "description": "User ka premium hato (Admin only)"},
         {"command": "premiumlist",   "description": "Sare premium users dekho (Admin only)"},
         {"command": "broadcast",     "description": "Sab users ko message bhejo (Admin only)"},
+        {"command": "reply",         "description": "User ko jawab bhejo (Admin only)"},
     ]
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
     data = json.dumps({"commands": commands}).encode()
