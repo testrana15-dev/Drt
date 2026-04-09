@@ -4,11 +4,13 @@ import logging
 import time
 import tempfile
 import shutil
+import json
+import urllib.request
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from pyrogram import Client, filters
-from pyrogram.types import Message, BotCommand
+from pyrogram import Client, filters, idle
+from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 
 from youtube_uploader import YouTubeUploader
@@ -29,6 +31,32 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def set_bot_commands_via_api():
+    commands = [
+        {"command": "start",         "description": "Bot shuru karo"},
+        {"command": "help",          "description": "Sare commands dekho"},
+        {"command": "accounts",      "description": "Connected YT accounts dekho"},
+        {"command": "addaccount",    "description": "Naya YouTube account add karo"},
+        {"command": "removeaccount", "description": "YouTube account remove karo"},
+        {"command": "code",          "description": "Auth code submit karo"},
+        {"command": "links",         "description": "Last 10 uploaded videos"},
+        {"command": "search",        "description": "Video title se search karo"},
+        {"command": "stats",         "description": "Bot ki total statistics"},
+    ]
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
+    data = json.dumps({"commands": commands}).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        resp = urllib.request.urlopen(req)
+        result = json.loads(resp.read())
+        if result.get("ok"):
+            logger.info("✅ Commands menu (3-line) set ho gaya!")
+        else:
+            logger.warning(f"Commands set failed: {result}")
+    except Exception as e:
+        logger.error(f"Commands API error: {e}")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -97,6 +125,7 @@ async def send_log(text: str):
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
+    logger.info(f"/start from user {message.from_user.id if message.from_user else 'N/A'}")
     await message.reply_text(
         "**🎬 YouTube Auto Uploader Bot**\n\n"
         "Video bhejo → YouTube pe upload → Link milega!\n\n"
@@ -140,8 +169,7 @@ async def add_account_cmd(client, message: Message):
             "**Usage:** `/addaccount ACCOUNT_NAME`\n\n"
             "**Example:**\n"
             "`/addaccount ACC1`\n"
-            "`/addaccount ACC2`\n"
-            "`/addaccount MyChannel`"
+            "`/addaccount ACC2`"
         )
         return
 
@@ -465,34 +493,11 @@ async def handle_video(client, message: Message):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-# ══════════════════════════════════════
-#           BOT STARTUP
-# ══════════════════════════════════════
-
-async def main():
-    await app.start()
-
-    await app.set_bot_commands([
-        BotCommand("start", "Bot shuru karo"),
-        BotCommand("help", "Sare commands dekho"),
-        BotCommand("accounts", "Connected YT accounts dekho"),
-        BotCommand("addaccount", "Naya YouTube account add karo"),
-        BotCommand("removeaccount", "YouTube account remove karo"),
-        BotCommand("code", "Auth code submit karo"),
-        BotCommand("links", "Last 10 uploaded videos"),
-        BotCommand("search", "Video title se search karo"),
-        BotCommand("stats", "Bot ki total statistics"),
-    ])
-
-    logger.info("✅ Bot ready! Messages ka intezaar hai...")
-
-    # Bot ko hamesha jagraat rakhta hai — jab tak manually band na karo
-    await asyncio.Event().wait()
-
-    await app.stop()
-
-
 if __name__ == "__main__":
+    # Commands menu HTTP API se set karo (start hone se pehle)
+    set_bot_commands_via_api()
+    # Health server background mein start karo
     Thread(target=start_health_server, daemon=True).start()
     logger.info("Bot starting...")
-    asyncio.run(main())
+    # Simple app.run() — sabse reliable
+    app.run()
