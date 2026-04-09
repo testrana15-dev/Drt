@@ -95,6 +95,11 @@ async def send_log(text: str):
 #           BASIC COMMANDS
 # ══════════════════════════════════════
 
+@app.on_message()
+async def debug_all(client, message: Message):
+    logger.info(f"MSG RECEIVED: from={message.from_user.id if message.from_user else 'N/A'} text={message.text}")
+
+
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
     await message.reply_text(
