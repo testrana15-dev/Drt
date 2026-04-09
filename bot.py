@@ -105,8 +105,11 @@ SUPPORTED_EXT = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".mpeg", ".3gp"]
 
 pending_add = {}
 
-# Duplicate upload prevention
-active_uploads = {}
+# Upload queue system
+active_uploads = {}          # file_unique_id -> True (already queued/processing)
+upload_queue = asyncio.Queue()
+queue_positions = {}         # file_unique_id -> status_msg (for position updates)
+UPLOAD_WORKERS = 2           # Ek saath max 2 videos process honge
 
 # Secret chat: admin_message_id -> user_id mapping
 contact_reply_map = {}
@@ -753,64 +756,11 @@ async def botstats_cmd(client, message: Message):
 
 
 # ══════════════════════════════════════
-#           VIDEO HANDLER
+#        UPLOAD QUEUE WORKER
 # ══════════════════════════════════════
 
-@app.on_message(filters.video | filters.document)
-async def handle_video(client, message: Message):
-    await register_user(message)
-    file = message.video or message.document
-    if not file:
-        return
-
-    if message.document:
-        mime = getattr(file, 'mime_type', '') or ''
-        fname = getattr(file, 'file_name', '') or ''
-        ext = os.path.splitext(fname)[1].lower()
-        if mime not in SUPPORTED_MIME and ext not in SUPPORTED_EXT:
-            await message.reply_text("❌ Sirf video files bhejo (MP4, MKV, etc.)")
-            return
-
-    if youtube.get_account_count() == 0:
-        await message.reply_text(
-            "❌ Koi YouTube account connected nahi hai!\n\n"
-            "Owner ko `/addaccount ACC1` use karna hoga."
-        )
-        return
-
-    # ── Duplicate upload prevention ──
-    file_unique_id = getattr(file, 'file_unique_id', None) or str(message.id)
-    if file_unique_id in active_uploads:
-        await message.reply_text(
-            "⚠️ **Yeh video already upload ho rahi hai!**\n\n"
-            "Pehle wali upload complete hone ka wait karo."
-        )
-        return
-    active_uploads[file_unique_id] = True
-    # ────────────────────────────────
-
-    caption = (
-        message.caption
-        or (message.document.file_name if message.document else None)
-        or f"Video_{message.id}"
-    )
-    title = caption.strip()
-    for ext in SUPPORTED_EXT:
-        if title.lower().endswith(ext):
-            title = title[:-len(ext)]
-            break
-
-    file_size = file.file_size or 0
-    size_mb = file_size / (1024 * 1024)
-    acc_count = youtube.get_account_count()
-
-    status_msg = await message.reply_text(
-        f"**📥 Download shuru...**\n\n"
-        f"📌 `{title}`\n"
-        f"📦 `{size_mb:.1f} MB`\n"
-        f"👤 Accounts: `{acc_count}` (auto-rotate ON)"
-    )
-
+async def process_upload(client, message: Message, status_msg, file_unique_id,
+                         title, caption, file_size, size_mb):
     tmp_dir = tempfile.mkdtemp()
     video_path = None
     dl_start = time.time()
@@ -839,6 +789,13 @@ async def handle_video(client, message: Message):
             pass
 
     try:
+        await status_msg.edit_text(
+            f"**📥 Download shuru...**\n\n"
+            f"📌 `{title}`\n"
+            f"📦 `{size_mb:.1f} MB`\n"
+            f"👤 Accounts: `{youtube.get_account_count()}` (auto-rotate ON)"
+        )
+
         video_path = await client.download_media(
             message,
             file_name=os.path.join(tmp_dir, f"video_{message.id}.tmp"),
@@ -936,13 +893,14 @@ async def handle_video(client, message: Message):
     except FloodWait as e:
         await asyncio.sleep(e.value)
     except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
+        logger.error(f"Upload error: {e}", exc_info=True)
         try:
             await status_msg.edit_text(f"❌ Error: `{str(e)[:300]}`")
         except Exception:
             pass
     finally:
         active_uploads.pop(file_unique_id, None)
+        queue_positions.pop(file_unique_id, None)
         if video_path and os.path.exists(video_path):
             try:
                 os.remove(video_path)
@@ -951,8 +909,106 @@ async def handle_video(client, message: Message):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+async def upload_worker(worker_id: int):
+    logger.info(f"Upload Worker #{worker_id} ready")
+    while True:
+        try:
+            task = await upload_queue.get()
+            client, message, status_msg, file_unique_id, title, caption, file_size, size_mb = task
+            try:
+                await process_upload(client, message, status_msg, file_unique_id,
+                                     title, caption, file_size, size_mb)
+            except Exception as e:
+                logger.error(f"Worker #{worker_id} error: {e}", exc_info=True)
+            finally:
+                upload_queue.task_done()
+        except Exception as e:
+            logger.error(f"Worker #{worker_id} fatal: {e}", exc_info=True)
+            await asyncio.sleep(1)
+
+
+# ══════════════════════════════════════
+#           VIDEO HANDLER
+# ══════════════════════════════════════
+
+@app.on_message(filters.video | filters.document)
+async def handle_video(client, message: Message):
+    await register_user(message)
+    file = message.video or message.document
+    if not file:
+        return
+
+    if message.document:
+        mime = getattr(file, 'mime_type', '') or ''
+        fname = getattr(file, 'file_name', '') or ''
+        ext = os.path.splitext(fname)[1].lower()
+        if mime not in SUPPORTED_MIME and ext not in SUPPORTED_EXT:
+            await message.reply_text("❌ Sirf video files bhejo (MP4, MKV, etc.)")
+            return
+
+    if youtube.get_account_count() == 0:
+        await message.reply_text(
+            "❌ Koi YouTube account connected nahi hai!\n\n"
+            "Owner ko `/addaccount ACC1` use karna hoga."
+        )
+        return
+
+    file_unique_id = getattr(file, 'file_unique_id', None) or str(message.id)
+
+    if file_unique_id in active_uploads:
+        await message.reply_text(
+            "⚠️ **Yeh video already queue mein hai!**\n\n"
+            "Pehle wali upload complete hone ka wait karo."
+        )
+        return
+
+    active_uploads[file_unique_id] = True
+
+    caption = (
+        message.caption
+        or (message.document.file_name if message.document else None)
+        or f"Video_{message.id}"
+    )
+    title = caption.strip()
+    for ext in SUPPORTED_EXT:
+        if title.lower().endswith(ext):
+            title = title[:-len(ext)]
+            break
+
+    file_size = file.file_size or 0
+    size_mb = file_size / (1024 * 1024)
+
+    queue_size = upload_queue.qsize()
+    if queue_size == 0:
+        status_msg = await message.reply_text(
+            f"**⏳ Queue mein add ho gaya...**\n\n"
+            f"📌 `{title}`\n"
+            f"📦 `{size_mb:.1f} MB`\n"
+            f"🔢 Position: `#1` — Abhi shuru hoga!"
+        )
+    else:
+        status_msg = await message.reply_text(
+            f"**📋 Queue mein add ho gaya**\n\n"
+            f"📌 `{title}`\n"
+            f"📦 `{size_mb:.1f} MB`\n"
+            f"🔢 Position: `#{queue_size + 1}` — Wait karo..."
+        )
+
+    queue_positions[file_unique_id] = status_msg
+    await upload_queue.put((client, message, status_msg, file_unique_id,
+                            title, caption, file_size, size_mb))
+
+
 if __name__ == "__main__":
     set_bot_commands_via_api()
     Thread(target=start_health_server, daemon=True).start()
     logger.info("Bot starting...")
-    app.run()
+
+    async def main():
+        async with app:
+            for i in range(UPLOAD_WORKERS):
+                asyncio.create_task(upload_worker(i + 1))
+            logger.info(f"✅ {UPLOAD_WORKERS} upload workers started")
+            await idle()
+
+    app.run(main())
