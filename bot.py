@@ -6,6 +6,7 @@ import tempfile
 import shutil
 import json
 import urllib.request
+from datetime import datetime, timedelta
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -45,8 +46,13 @@ def set_bot_commands_via_api():
         {"command": "links",         "description": "Last 10 uploaded videos"},
         {"command": "search",        "description": "Video title se search karo"},
         {"command": "stats",         "description": "Bot ki total statistics"},
+        {"command": "botstats",      "description": "Daily/Weekly/Monthly user stats"},
         {"command": "mypremium",     "description": "Apna premium status dekho"},
         {"command": "contact",       "description": "Admin ko private message bhejo"},
+        {"command": "addpremium",    "description": "User ko premium do (Admin only)"},
+        {"command": "removepremium", "description": "User ka premium hato (Admin only)"},
+        {"command": "premiumlist",   "description": "Sare premium users dekho (Admin only)"},
+        {"command": "broadcast",     "description": "Sab users ko message bhejo (Admin only)"},
     ]
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
     data = json.dumps({"commands": commands}).encode()
@@ -632,13 +638,59 @@ async def stats_cmd(client, message: Message):
     total_size = await db.get_total_size()
     acc_count = youtube.get_account_count()
     total_users = await db.get_total_users()
+    premium_users = await db.get_premium_users()
     await message.reply_text(
         f"**📊 Bot Stats**\n\n"
         f"🎬 Total Videos: `{total}`\n"
         f"💾 Total Size: `{total_size:.1f} MB`\n"
-        f"👤 Active Accounts: `{acc_count}`\n"
+        f"👤 Active YT Accounts: `{acc_count}`\n"
         f"📈 Daily Capacity: `~{acc_count * 6}` videos\n"
-        f"👥 Total Users: `{total_users}`"
+        f"👥 Total Users: `{total_users}`\n"
+        f"⭐ Premium Users: `{len(premium_users)}`"
+    )
+
+
+@app.on_message(filters.command("botstats"))
+async def botstats_cmd(client, message: Message):
+    await register_user(message)
+    now = datetime.utcnow()
+    today     = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    this_week = now - timedelta(days=7)
+    this_month = now - timedelta(days=30)
+
+    total_users   = await db.get_total_users()
+    daily_new     = await db.get_users_since(today)
+    weekly_new    = await db.get_users_since(this_week)
+    monthly_new   = await db.get_users_since(this_month)
+
+    daily_active  = await db.get_active_users_since(today)
+    weekly_active = await db.get_active_users_since(this_week)
+    monthly_active= await db.get_active_users_since(this_month)
+
+    daily_vids    = await db.get_videos_since(today)
+    weekly_vids   = await db.get_videos_since(this_week)
+    monthly_vids  = await db.get_videos_since(this_month)
+    total_vids    = await db.get_total_count()
+
+    premium_count = len(await db.get_premium_users())
+
+    await message.reply_text(
+        f"**📈 Bot Detailed Stats**\n\n"
+        f"**👥 New Users Joined:**\n"
+        f"• Aaj:        `{daily_new}`\n"
+        f"• Is Hafte:   `{weekly_new}`\n"
+        f"• Is Mahine:  `{monthly_new}`\n"
+        f"• Overall:    `{total_users}`\n\n"
+        f"**🟢 Active Users (last seen):**\n"
+        f"• Aaj:        `{daily_active}`\n"
+        f"• Is Hafte:   `{weekly_active}`\n"
+        f"• Is Mahine:  `{monthly_active}`\n\n"
+        f"**🎬 Videos Uploaded:**\n"
+        f"• Aaj:        `{daily_vids}`\n"
+        f"• Is Hafte:   `{weekly_vids}`\n"
+        f"• Is Mahine:  `{monthly_vids}`\n"
+        f"• Overall:    `{total_vids}`\n\n"
+        f"**⭐ Premium Users: `{premium_count}`**"
     )
 
 

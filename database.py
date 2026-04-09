@@ -89,3 +89,12 @@ class Database:
 
     async def get_total_users(self):
         return await self.users_col.count_documents({})
+
+    async def get_users_since(self, since_dt):
+        return await self.users_col.count_documents({"joined_at": {"$gte": since_dt}})
+
+    async def get_active_users_since(self, since_dt):
+        return await self.users_col.count_documents({"last_seen": {"$gte": since_dt}})
+
+    async def get_videos_since(self, since_dt):
+        return await self.col.count_documents({"uploaded_at": {"$gte": since_dt}})
