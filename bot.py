@@ -7,7 +7,7 @@ import shutil
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pyrogram.types import Message, BotCommand
 from pyrogram.errors import FloodWait
 
@@ -94,11 +94,6 @@ async def send_log(text: str):
 # ══════════════════════════════════════
 #           BASIC COMMANDS
 # ══════════════════════════════════════
-
-@app.on_message()
-async def debug_all(client, message: Message):
-    logger.info(f"MSG RECEIVED: from={message.from_user.id if message.from_user else 'N/A'} text={message.text}")
-
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
@@ -475,20 +470,26 @@ async def handle_video(client, message: Message):
 # ══════════════════════════════════════
 
 async def main():
-    async with app:
-        await app.set_bot_commands([
-            BotCommand("start", "Bot shuru karo"),
-            BotCommand("help", "Sare commands dekho"),
-            BotCommand("accounts", "Connected YT accounts dekho"),
-            BotCommand("addaccount", "Naya YouTube account add karo"),
-            BotCommand("removeaccount", "YouTube account remove karo"),
-            BotCommand("code", "Auth code submit karo"),
-            BotCommand("links", "Last 10 uploaded videos"),
-            BotCommand("search", "Video title se search karo"),
-            BotCommand("stats", "Bot ki total statistics"),
-        ])
-        logger.info("✅ Commands menu set ho gaya!")
-        await idle()
+    await app.start()
+
+    await app.set_bot_commands([
+        BotCommand("start", "Bot shuru karo"),
+        BotCommand("help", "Sare commands dekho"),
+        BotCommand("accounts", "Connected YT accounts dekho"),
+        BotCommand("addaccount", "Naya YouTube account add karo"),
+        BotCommand("removeaccount", "YouTube account remove karo"),
+        BotCommand("code", "Auth code submit karo"),
+        BotCommand("links", "Last 10 uploaded videos"),
+        BotCommand("search", "Video title se search karo"),
+        BotCommand("stats", "Bot ki total statistics"),
+    ])
+
+    logger.info("✅ Bot ready! Messages ka intezaar hai...")
+
+    # Bot ko hamesha jagraat rakhta hai — jab tak manually band na karo
+    await asyncio.Event().wait()
+
+    await app.stop()
 
 
 if __name__ == "__main__":
