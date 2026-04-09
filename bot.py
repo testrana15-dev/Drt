@@ -102,6 +102,9 @@ pending_add = {}
 # Duplicate upload prevention
 active_uploads = {}
 
+# Secret chat: admin_message_id -> user_id mapping
+contact_reply_map = {}
+
 
 def human_size(num):
     for unit in ["B", "KB", "MB", "GB"]:
@@ -251,16 +254,17 @@ async def contact_cmd(client, message: Message):
     first_name = user.first_name if user else "Unknown"
 
     try:
-        await client.send_message(
+        sent = await client.send_message(
             OWNER_ID,
             f"**📩 Naya Message (Secret Chat)**\n\n"
             f"👤 **User:** {first_name}\n"
             f"🔗 **Username:** {username}\n"
             f"🆔 **ID:** `{user_id}`\n\n"
             f"**💬 Message:**\n{user_msg}\n\n"
-            f"**↩️ Reply karne ke liye:**\n"
-            f"`/reply {user_id} Aapka jawab`"
+            f"💡 _Iss message ko Telegram mein Reply karo — seedha user tak pahunch jayega!_\n"
+            f"_Ya use karo:_ `/reply {user_id} Aapka jawab`"
         )
+        contact_reply_map[sent.id] = user_id
         await message.reply_text(
             "**✅ Aapka message admin ko pahunch gaya!**\n\n"
             "Admin jald hi reply karenge.\n\n"
@@ -300,6 +304,30 @@ async def reply_user_cmd(client, message: Message):
         await message.reply_text(f"✅ Reply `{target_id}` ko bhej di gayi!")
     except Exception as e:
         await message.reply_text(f"❌ Reply nahi bhej saka: `{e}`")
+
+
+@app.on_message(filters.user(OWNER_ID) & filters.reply & ~filters.command(["reply", "broadcast", "addpremium", "removepremium", "premiumlist", "addaccount", "removeaccount", "accounts", "links", "search", "stats", "start", "help", "contact", "code"]))
+async def admin_native_reply(client, message: Message):
+    replied = message.reply_to_message
+    if not replied:
+        return
+
+    target_user_id = contact_reply_map.get(replied.id)
+    if not target_user_id:
+        return
+
+    reply_text = message.text or message.caption or ""
+    if not reply_text:
+        return
+
+    try:
+        await client.send_message(
+            target_user_id,
+            f"**📩 Admin ka jawab:**\n\n{reply_text}"
+        )
+        await message.reply_text(f"✅ Reply user `{target_user_id}` ko deliver ho gayi!")
+    except Exception as e:
+        await message.reply_text(f"❌ Deliver nahi hui: `{e}`")
 
 
 # ══════════════════════════════════════
