@@ -12,6 +12,7 @@ class Database:
         self.col = self.db["videos"]
         self.premium_col = self.db["premium_users"]
         self.users_col = self.db["users"]
+        self.pending_col = self.db["pending_uploads"]
         logger.info("MongoDB connected!")
 
     # ── Videos ──────────────────────────────────────────
@@ -98,3 +99,39 @@ class Database:
 
     async def get_videos_since(self, since_dt):
         return await self.col.count_documents({"uploaded_at": {"$gte": since_dt}})
+
+    # ── Pending Uploads (quota exceeded → retry next day) ──
+
+    async def save_pending_upload(self, chat_id: int, message_id: int,
+                                   title: str, caption: str,
+                                   file_size: int, size_mb: float,
+                                   user_id: int, username: str):
+        doc = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "title": title,
+            "caption": caption,
+            "file_size": file_size,
+            "size_mb": size_mb,
+            "user_id": user_id,
+            "username": username,
+            "saved_at": datetime.utcnow(),
+            "retry_count": 0
+        }
+        await self.pending_col.insert_one(doc)
+
+    async def get_pending_uploads(self):
+        cursor = self.pending_col.find().sort("saved_at", 1)
+        return await cursor.to_list(length=500)
+
+    async def delete_pending_upload(self, doc_id):
+        await self.pending_col.delete_one({"_id": doc_id})
+
+    async def increment_pending_retry(self, doc_id):
+        await self.pending_col.update_one(
+            {"_id": doc_id},
+            {"$inc": {"retry_count": 1}, "$set": {"last_retry": datetime.utcnow()}}
+        )
+
+    async def get_pending_count(self):
+        return await self.pending_col.count_documents({})

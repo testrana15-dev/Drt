@@ -53,6 +53,8 @@ def set_bot_commands_via_api():
         {"command": "premiumlist",   "description": "Sare premium users dekho (Admin only)"},
         {"command": "broadcast",     "description": "Sab users ko message bhejo (Admin only)"},
         {"command": "reply",         "description": "User ko jawab bhejo (Admin only)"},
+        {"command": "pending",       "description": "Pending uploads dekho (Admin only)"},
+        {"command": "retrypending",  "description": "Pending uploads abhi retry karo (Admin only)"},
     ]
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
     data = json.dumps({"commands": commands}).encode()
@@ -883,11 +885,26 @@ async def process_upload(client, message: Message, status_msg, file_unique_id,
                 f"💾 MongoDB me save ✅"
             )
         else:
+            user_id = message.from_user.id if message.from_user else 0
+            username = message.from_user.username if message.from_user else "unknown"
+            await db.save_pending_upload(
+                chat_id=message.chat.id,
+                message_id=message.id,
+                title=title,
+                caption=caption,
+                file_size=file_size,
+                size_mb=size_mb,
+                user_id=user_id,
+                username=username
+            )
             await status_msg.edit_text(
-                "❌ **Sare accounts ka limit exceed ho gaya!**\n\n"
-                f"Total accounts: `{youtube.get_account_count()}`\n"
-                "Kal dobara try karo ya naya account add karo:\n"
-                "`/addaccount ACC_NEW`"
+                "⚠️ **YouTube Quota Khatam Ho Gaya!**\n\n"
+                f"📌 `{title}`\n"
+                f"📦 `{size_mb:.1f} MB`\n\n"
+                "✅ **Teri video save kar li gayi hai!**\n"
+                "YouTube quota kal subah ~8:30 AM UTC pe reset hoga.\n"
+                "**Dobara bhejne ki zaroorat nahi — kal automatically upload ho jaayega!** 🔄\n\n"
+                "📋 Status check karna ho to `/pending` use karo."
             )
 
     except FloodWait as e:
@@ -999,6 +1016,118 @@ async def handle_video(client, message: Message):
                             title, caption, file_size, size_mb))
 
 
+# ══════════════════════════════════════
+#        PENDING UPLOADS RETRY
+# ══════════════════════════════════════
+
+async def retry_pending_uploads(client):
+    pending = await db.get_pending_uploads()
+    if not pending:
+        logger.info("Pending retry: koi pending upload nahi hai")
+        return
+
+    logger.info(f"Pending retry: {len(pending)} videos retry ho rahe hain...")
+
+    for doc in pending:
+        doc_id    = doc["_id"]
+        chat_id   = doc["chat_id"]
+        message_id = doc["message_id"]
+        title     = doc["title"]
+        caption   = doc["caption"]
+        file_size = doc["file_size"]
+        size_mb   = doc["size_mb"]
+        user_id   = doc["user_id"]
+
+        try:
+            orig_msg = await client.get_messages(chat_id, message_id)
+            if not orig_msg or not (orig_msg.video or orig_msg.document):
+                logger.warning(f"Pending: message {message_id} Telegram pe nahi mila, skip")
+                await db.delete_pending_upload(doc_id)
+                try:
+                    await client.send_message(
+                        user_id,
+                        f"⚠️ Pending video **'{title}'** ka original message Telegram pe expire ho gaya.\n"
+                        "Dobara bhejni padegi."
+                    )
+                except Exception:
+                    pass
+                continue
+
+            notify_msg = await client.send_message(
+                user_id,
+                f"🔄 **Auto-Retry Shuru!**\n\n"
+                f"📌 `{title}`\n"
+                f"📦 `{size_mb:.1f} MB`\n\n"
+                "YouTube quota reset ho gaya. Upload ho raha hai..."
+            )
+
+            await db.increment_pending_retry(doc_id)
+            await upload_queue.put((
+                client, orig_msg, notify_msg,
+                getattr(orig_msg.video or orig_msg.document, 'file_unique_id', str(message_id)),
+                title, caption, file_size, size_mb
+            ))
+
+            active_uploads[
+                getattr(orig_msg.video or orig_msg.document, 'file_unique_id', str(message_id))
+            ] = True
+
+            await db.delete_pending_upload(doc_id)
+
+        except Exception as e:
+            logger.error(f"Pending retry error for msg {message_id}: {e}")
+
+
+async def daily_retry_scheduler(client):
+    while True:
+        now_utc = datetime.utcnow()
+        next_retry = now_utc.replace(hour=8, minute=30, second=0, microsecond=0)
+        if now_utc >= next_retry:
+            next_retry = next_retry + timedelta(days=1)
+        wait_secs = (next_retry - now_utc).total_seconds()
+        logger.info(f"Daily retry scheduler: {wait_secs/3600:.1f} ghante baad chalega ({next_retry} UTC)")
+        await asyncio.sleep(wait_secs)
+        logger.info("Daily retry: YouTube quota reset ho gaya, pending uploads retry ho rahe hain...")
+        try:
+            await retry_pending_uploads(client)
+        except Exception as e:
+            logger.error(f"Daily retry error: {e}", exc_info=True)
+
+
+@app.on_message(filters.command("pending") & filters.user(OWNER_ID))
+async def pending_command(client, message: Message):
+    pending = await db.get_pending_uploads()
+    if not pending:
+        await message.reply_text("✅ Koi pending upload nahi hai!")
+        return
+
+    lines = [f"**📋 Pending Uploads: `{len(pending)}`**\n"]
+    for i, doc in enumerate(pending[:20], 1):
+        saved = doc["saved_at"].strftime("%d %b %H:%M UTC")
+        lines.append(
+            f"`{i}.` **{doc['title'][:35]}**\n"
+            f"    👤 `{doc['user_id']}` | 📦 `{doc['size_mb']:.1f} MB` | 🔁 `{doc['retry_count']}x`\n"
+            f"    ⏰ `{saved}`"
+        )
+    if len(pending) > 20:
+        lines.append(f"\n_...aur `{len(pending) - 20}` videos_")
+    lines.append("\n\n💡 Abhi retry karna hai? `/retrypending` use karo.")
+    await message.reply_text("\n".join(lines))
+
+
+@app.on_message(filters.command("retrypending") & filters.user(OWNER_ID))
+async def force_retry_command(client, message: Message):
+    count = await db.get_pending_count()
+    if count == 0:
+        await message.reply_text("✅ Koi pending upload nahi hai!")
+        return
+    await message.reply_text(
+        f"🔄 **{count} pending videos ka retry shuru ho raha hai...**\n"
+        "Har video queue mein add hogi. Users ko notify kiya jaayega."
+    )
+    await retry_pending_uploads(client)
+
+
 if __name__ == "__main__":
     set_bot_commands_via_api()
     Thread(target=start_health_server, daemon=True).start()
@@ -1008,7 +1137,8 @@ if __name__ == "__main__":
         async with app:
             for i in range(UPLOAD_WORKERS):
                 asyncio.create_task(upload_worker(i + 1))
-            logger.info(f"✅ {UPLOAD_WORKERS} upload workers started")
+            asyncio.create_task(daily_retry_scheduler(app))
+            logger.info(f"✅ {UPLOAD_WORKERS} upload workers + daily retry scheduler started")
             await idle()
 
     app.run(main())
