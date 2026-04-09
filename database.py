@@ -11,7 +11,10 @@ class Database:
         self.db = self.client["yt_uploader_bot"]
         self.col = self.db["videos"]
         self.premium_col = self.db["premium_users"]
+        self.users_col = self.db["users"]
         logger.info("MongoDB connected!")
+
+    # ── Videos ──────────────────────────────────────────
 
     async def save_video(self, title, caption, yt_link, yt_id, size_mb, user_id, username):
         doc = {
@@ -44,6 +47,8 @@ class Database:
         result = await self.col.aggregate(pipeline).to_list(1)
         return result[0]["total"] if result else 0.0
 
+    # ── Premium Users ────────────────────────────────────
+
     async def add_premium_user(self, user_id: int, username: str = ""):
         await self.premium_col.update_one(
             {"user_id": user_id},
@@ -62,3 +67,25 @@ class Database:
     async def get_premium_users(self):
         cursor = self.premium_col.find().sort("added_at", -1)
         return await cursor.to_list(length=100)
+
+    # ── All Users (for broadcast) ────────────────────────
+
+    async def save_user(self, user_id: int, username: str = "", first_name: str = ""):
+        await self.users_col.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "user_id": user_id,
+                "username": username,
+                "first_name": first_name,
+                "last_seen": datetime.utcnow()
+            }, "$setOnInsert": {"joined_at": datetime.utcnow()}},
+            upsert=True
+        )
+
+    async def get_all_user_ids(self):
+        cursor = self.users_col.find({}, {"user_id": 1})
+        docs = await cursor.to_list(length=100000)
+        return [d["user_id"] for d in docs]
+
+    async def get_total_users(self):
+        return await self.users_col.count_documents({})

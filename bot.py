@@ -39,13 +39,14 @@ def set_bot_commands_via_api():
         {"command": "start",         "description": "Bot shuru karo"},
         {"command": "help",          "description": "Sare commands dekho"},
         {"command": "accounts",      "description": "Connected YT accounts dekho"},
-        {"command": "addaccount",    "description": "Apna YouTube account add karo"},
-        {"command": "removeaccount", "description": "YouTube account remove karo"},
+        {"command": "addaccount",    "description": "Apna YouTube account add karo (Premium)"},
+        {"command": "removeaccount", "description": "YouTube account remove karo (Premium)"},
         {"command": "code",          "description": "Auth code submit karo"},
         {"command": "links",         "description": "Last 10 uploaded videos"},
         {"command": "search",        "description": "Video title se search karo"},
         {"command": "stats",         "description": "Bot ki total statistics"},
         {"command": "mypremium",     "description": "Apna premium status dekho"},
+        {"command": "contact",       "description": "Admin ko private message bhejo"},
     ]
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
     data = json.dumps({"commands": commands}).encode()
@@ -98,7 +99,7 @@ SUPPORTED_EXT = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".mpeg", ".3gp"]
 
 pending_add = {}
 
-# Duplicate upload prevention: file_unique_id -> True
+# Duplicate upload prevention
 active_uploads = {}
 
 
@@ -124,12 +125,35 @@ async def send_log(text: str):
         logger.error(f"Log error: {e}")
 
 
+async def register_user(message: Message):
+    if not message.from_user:
+        return
+    u = message.from_user
+    await db.save_user(
+        user_id=u.id,
+        username=u.username or "",
+        first_name=u.first_name or ""
+    )
+
+
+def contact_info_text():
+    parts = ["**📩 Admin se contact karne ke 2 tarike hain:**\n"]
+    parts.append("**1️⃣ Bot ke zariye (Secret Message):**")
+    parts.append("`/contact Aapka message yahan likhein`")
+    parts.append("Admin ko seedha aapka message pahunch jaayega.\n")
+    if ADMIN_LINK:
+        parts.append("**2️⃣ Admin se directly baat karo:**")
+        parts.append(ADMIN_LINK)
+    return "\n".join(parts)
+
+
 # ══════════════════════════════════════
 #           BASIC COMMANDS
 # ══════════════════════════════════════
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
+    await register_user(message)
     user_id = message.from_user.id if message.from_user else 0
     is_premium = await db.is_premium_user(user_id)
     premium_badge = "⭐ Premium" if is_premium else "👤 Free"
@@ -142,16 +166,17 @@ async def start_cmd(client, message: Message):
         f"**Multi-Account:** Auto-rotate ✅\n\n"
         f"Caption = YouTube title 📌\n\n"
         f"**Aapka Status:** {premium_badge}\n\n"
-        f"/accounts — Connected accounts dekho\n"
+        f"/accounts — Connected accounts\n"
         f"/links — Recent uploads\n"
-        f"/stats — Upload statistics\n"
-        f"/mypremium — Premium status"
+        f"/stats — Statistics\n"
+        f"/mypremium — Premium status\n"
+        f"/contact — Admin ko message karo"
     )
 
 
 @app.on_message(filters.command("help"))
 async def help_cmd(client, message: Message):
-    admin_text = f"\n📩 Admin se contact karo: {ADMIN_LINK}" if ADMIN_LINK else ""
+    await register_user(message)
     await message.reply_text(
         "**📖 Commands**\n\n"
         "**📹 Upload**\n"
@@ -160,26 +185,27 @@ async def help_cmd(client, message: Message):
         "/links — Last 10 uploads\n"
         "/search TITLE — Video dhundho\n"
         "/stats — Total stats\n\n"
-        "**🎬 YouTube Account**\n"
-        "/addaccount NAME — Apna YT account add karo (Premium)\n"
-        "/removeaccount NAME — Apna account remove karo (Premium)\n"
+        "**🎬 YouTube Account (Premium)**\n"
+        "/addaccount NAME — Apna YT account add karo\n"
+        "/removeaccount NAME — Account remove karo\n"
         "/accounts — Sare accounts dekho\n"
         "/mypremium — Apna premium status\n\n"
-        "**⭐ Premium kaise len?**\n"
-        f"Premium users hi apna YouTube channel add kar sakte hain.{admin_text}"
+        "**📩 Support**\n"
+        "/contact MESSAGE — Admin ko private message bhejo\n\n"
+        + contact_info_text()
     )
 
 
 @app.on_message(filters.command("mypremium"))
 async def mypremium_cmd(client, message: Message):
+    await register_user(message)
     user_id = message.from_user.id if message.from_user else 0
     is_premium = await db.is_premium_user(user_id)
-    admin_text = f"\n\n📩 Premium ke liye admin se milo: {ADMIN_LINK}" if ADMIN_LINK else "\n\n📩 Admin se contact karo premium ke liye."
 
     if is_premium:
         await message.reply_text(
             "**⭐ Aap Premium User hain!**\n\n"
-            "✅ Aap `/addaccount` use karke apna YouTube channel add kar sakte ho.\n"
+            "✅ `/addaccount` se apna YouTube channel add kar sakte ho\n"
             "✅ Unlimited video upload\n\n"
             "**YouTube Account Add karne ke steps:**\n"
             "1. `/addaccount APNA_NAAM` bhejo\n"
@@ -190,13 +216,133 @@ async def mypremium_cmd(client, message: Message):
     else:
         await message.reply_text(
             "**👤 Aap Free User hain**\n\n"
-            "❌ Aap abhi apna YouTube channel add nahi kar sakte.\n\n"
-            "**⭐ Premium ke liye zaroor hai:**\n"
+            "❌ Apna YouTube channel abhi add nahi kar sakte.\n\n"
+            "**⭐ Premium lene ke liye:**\n"
             "• Aapki Gmail Google Cloud Console mein add honi chahiye\n"
-            "• YouTube channel banana hoga (agar nahi hai)\n"
+            "• YouTube channel banana hoga\n"
             "• Phone number verify hona chahiye\n\n"
-            f"Premium milne ke baad aap apna channel add kar sakte ho.{admin_text}"
+            + contact_info_text()
         )
+
+
+# ══════════════════════════════════════
+#       CONTACT / SECRET CHAT
+# ══════════════════════════════════════
+
+@app.on_message(filters.command("contact"))
+async def contact_cmd(client, message: Message):
+    await register_user(message)
+    user = message.from_user
+    user_id = user.id if user else 0
+
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        await message.reply_text(
+            "**📩 Admin ko message kaise bhejein:**\n\n"
+            "`/contact Aapka message yahan likhein`\n\n"
+            "**Example:**\n"
+            "`/contact Mujhe premium chahiye, mera channel link hai: youtube.com/...`\n\n"
+            + (f"**Ya seedha admin se baat karo:** {ADMIN_LINK}" if ADMIN_LINK else "")
+        )
+        return
+
+    user_msg = parts[1].strip()
+    username = f"@{user.username}" if user and user.username else "N/A"
+    first_name = user.first_name if user else "Unknown"
+
+    try:
+        await client.send_message(
+            OWNER_ID,
+            f"**📩 Naya Message (Secret Chat)**\n\n"
+            f"👤 **User:** {first_name}\n"
+            f"🔗 **Username:** {username}\n"
+            f"🆔 **ID:** `{user_id}`\n\n"
+            f"**💬 Message:**\n{user_msg}\n\n"
+            f"**↩️ Reply karne ke liye:**\n"
+            f"`/reply {user_id} Aapka jawab`"
+        )
+        await message.reply_text(
+            "**✅ Aapka message admin ko pahunch gaya!**\n\n"
+            "Admin jald hi reply karenge.\n\n"
+            + (f"**Ya seedha baat karo:** {ADMIN_LINK}" if ADMIN_LINK else "")
+        )
+    except Exception as e:
+        logger.error(f"Contact forward error: {e}")
+        await message.reply_text(
+            "❌ Message nahi bheja ja saka. Seedha admin se contact karo:\n\n"
+            + (ADMIN_LINK if ADMIN_LINK else "Admin se baat karo.")
+        )
+
+
+@app.on_message(filters.command("reply") & filters.user(OWNER_ID))
+async def reply_user_cmd(client, message: Message):
+    parts = message.text.split(None, 2)
+    if len(parts) < 3:
+        await message.reply_text(
+            "**Usage:** `/reply USER_ID Aapka jawab`\n\n"
+            "**Example:** `/reply 123456789 Haan, aapko premium de diya gaya!`"
+        )
+        return
+
+    try:
+        target_id = int(parts[1].strip())
+    except ValueError:
+        await message.reply_text("❌ Valid User ID daalo.")
+        return
+
+    reply_text = parts[2].strip()
+
+    try:
+        await client.send_message(
+            target_id,
+            f"**📩 Admin ka jawab:**\n\n{reply_text}"
+        )
+        await message.reply_text(f"✅ Reply `{target_id}` ko bhej di gayi!")
+    except Exception as e:
+        await message.reply_text(f"❌ Reply nahi bhej saka: `{e}`")
+
+
+# ══════════════════════════════════════
+#       BROADCAST (OWNER ONLY)
+# ══════════════════════════════════════
+
+@app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
+async def broadcast_cmd(client, message: Message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        total = await db.get_total_users()
+        await message.reply_text(
+            f"**Usage:** `/broadcast Aapka message`\n\n"
+            f"**Example:** `/broadcast Bot update ho gaya!`\n\n"
+            f"📊 Total users: `{total}`"
+        )
+        return
+
+    broadcast_text = parts[1].strip()
+    user_ids = await db.get_all_user_ids()
+
+    status_msg = await message.reply_text(
+        f"📡 **Broadcast shuru ho raha hai...**\n\n"
+        f"Total users: `{len(user_ids)}`"
+    )
+
+    success = 0
+    failed = 0
+
+    for uid in user_ids:
+        try:
+            await client.send_message(uid, f"📢 **Admin ka message:**\n\n{broadcast_text}")
+            success += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await status_msg.edit_text(
+        f"**✅ Broadcast Complete!**\n\n"
+        f"✅ Bheja: `{success}`\n"
+        f"❌ Failed: `{failed}`\n"
+        f"📊 Total: `{len(user_ids)}`"
+    )
 
 
 # ══════════════════════════════════════
@@ -209,8 +355,7 @@ async def add_premium_cmd(client, message: Message):
     if len(parts) < 2:
         await message.reply_text(
             "**Usage:** `/addpremium USER_ID`\n\n"
-            "**Example:** `/addpremium 123456789`\n\n"
-            "User ka Telegram ID daalo."
+            "**Example:** `/addpremium 123456789`"
         )
         return
 
@@ -225,6 +370,18 @@ async def add_premium_cmd(client, message: Message):
         f"✅ **User `{target_id}` ko Premium mil gaya!**\n\n"
         f"Ab wo `/addaccount` use kar sakta hai."
     )
+    try:
+        await client.send_message(
+            target_id,
+            "**🎉 Congratulations! Aapko Premium mil gaya!**\n\n"
+            "⭐ Ab aap `/addaccount` se apna YouTube channel add kar sakte ho!\n\n"
+            "**Steps:**\n"
+            "1. `/addaccount APNA_NAAM` bhejo\n"
+            "2. Auth link pe jao → Login karo\n"
+            "3. Code copy karke `/code NAAM CODE` bhejo"
+        )
+    except Exception:
+        pass
 
 
 @app.on_message(filters.command("removepremium") & filters.user(OWNER_ID))
@@ -267,18 +424,18 @@ async def premium_list_cmd(client, message: Message):
 
 @app.on_message(filters.command("addaccount"))
 async def add_account_cmd(client, message: Message):
+    await register_user(message)
     user_id = message.from_user.id if message.from_user else 0
     is_owner = (user_id == OWNER_ID)
     is_premium = await db.is_premium_user(user_id)
 
     if not is_owner and not is_premium:
-        admin_text = f"\n\n📩 Premium ke liye yahan contact karo: {ADMIN_LINK}" if ADMIN_LINK else "\n\n📩 Admin se premium lene ke liye contact karo."
         await message.reply_text(
             "**❌ Sirf Premium Users hi YouTube account add kar sakte hain!**\n\n"
-            "**⭐ Premium kaise milega?**\n"
+            "**⭐ Premium lene ke liye:**\n"
             "• Admin aapka Telegram ID premium list mein add karega\n"
-            "• Phir aap apna YouTube channel connect kar sakte ho\n"
-            f"{admin_text}"
+            "• Phir aap apna YouTube channel connect kar sakte ho\n\n"
+            + contact_info_text()
         )
         return
 
@@ -304,7 +461,7 @@ async def add_account_cmd(client, message: Message):
             f"**⚠️ Pehle yeh zaroori hai:**\n"
             f"1️⃣ Google account mein **phone number verify** hona chahiye\n"
             f"2️⃣ YouTube pe **apna channel** banana hoga (agar nahi hai)\n"
-            f"3️⃣ **Aapki Gmail** Google Cloud Console mein test user ke roop mein add honi chahiye — warna upload fail hoga!\n\n"
+            f"3️⃣ **Aapki Gmail** Google Cloud Console mein **test user** ke roop mein add honi chahiye — warna upload fail hoga!\n\n"
             f"**Agar sab ready hai toh:**\n"
             f"**Step 1:** Iss link pe jao:\n`{auth_url}`\n\n"
             f"**Step 2:** Apne Google account se login karo\n"
@@ -319,6 +476,7 @@ async def add_account_cmd(client, message: Message):
 
 @app.on_message(filters.command("code"))
 async def code_cmd(client, message: Message):
+    await register_user(message)
     user_id = message.from_user.id if message.from_user else 0
     is_owner = (user_id == OWNER_ID)
     is_premium = await db.is_premium_user(user_id)
@@ -352,15 +510,16 @@ async def code_cmd(client, message: Message):
             f"❌ **Authorization Failed!**\n\n"
             f"Code galat ya expire ho gaya.\n"
             f"Dobara `/addaccount {acc_name}` karo aur jaldi code bhejo.\n\n"
-            f"**Agar baar baar fail ho raha hai:**\n"
-            f"• Check karo ki aapki Gmail Google Cloud Console mein **test user** ke roop mein add hai\n"
-            f"• YouTube channel bana lo agar nahi hai\n"
-            f"• Phone number verify hona chahiye Google account mein"
+            f"**Baar baar fail ho raha hai? Check karo:**\n"
+            f"• Aapki Gmail Google Cloud Console mein **test user** ke roop mein add hai?\n"
+            f"• YouTube channel bana hua hai?\n"
+            f"• Phone number verify hai Google account mein?"
         )
 
 
 @app.on_message(filters.command("removeaccount"))
 async def remove_account_cmd(client, message: Message):
+    await register_user(message)
     user_id = message.from_user.id if message.from_user else 0
     is_owner = (user_id == OWNER_ID)
     is_premium = await db.is_premium_user(user_id)
@@ -382,7 +541,7 @@ async def remove_account_cmd(client, message: Message):
     if success:
         await message.reply_text(
             f"✅ Account `{acc_name}` remove ho gaya!\n\n"
-            f"Remaining accounts: `{youtube.get_account_count()}`\n"
+            f"Remaining: `{youtube.get_account_count()}`\n"
             f"{youtube.get_accounts_status()}"
         )
     else:
@@ -391,6 +550,7 @@ async def remove_account_cmd(client, message: Message):
 
 @app.on_message(filters.command("accounts"))
 async def accounts_cmd(client, message: Message):
+    await register_user(message)
     count = youtube.get_account_count()
     status = youtube.get_accounts_status()
     daily_limit = count * 6
@@ -408,6 +568,7 @@ async def accounts_cmd(client, message: Message):
 
 @app.on_message(filters.command("links"))
 async def links_cmd(client, message: Message):
+    await register_user(message)
     videos = await db.get_recent_videos(10)
     if not videos:
         await message.reply_text("❌ Abhi tak koi video upload nahi hua.")
@@ -420,6 +581,7 @@ async def links_cmd(client, message: Message):
 
 @app.on_message(filters.command("search"))
 async def search_cmd(client, message: Message):
+    await register_user(message)
     parts = message.text.split(None, 1)
     if len(parts) < 2:
         await message.reply_text("Usage: `/search VIDEO TITLE`")
@@ -437,15 +599,18 @@ async def search_cmd(client, message: Message):
 
 @app.on_message(filters.command("stats"))
 async def stats_cmd(client, message: Message):
+    await register_user(message)
     total = await db.get_total_count()
     total_size = await db.get_total_size()
     acc_count = youtube.get_account_count()
+    total_users = await db.get_total_users()
     await message.reply_text(
         f"**📊 Bot Stats**\n\n"
         f"🎬 Total Videos: `{total}`\n"
         f"💾 Total Size: `{total_size:.1f} MB`\n"
         f"👤 Active Accounts: `{acc_count}`\n"
-        f"📈 Daily Capacity: `~{acc_count * 6}` videos"
+        f"📈 Daily Capacity: `~{acc_count * 6}` videos\n"
+        f"👥 Total Users: `{total_users}`"
     )
 
 
@@ -455,6 +620,7 @@ async def stats_cmd(client, message: Message):
 
 @app.on_message(filters.video | filters.document)
 async def handle_video(client, message: Message):
+    await register_user(message)
     file = message.video or message.document
     if not file:
         return
@@ -638,7 +804,6 @@ async def handle_video(client, message: Message):
         except Exception:
             pass
     finally:
-        # Remove from active uploads
         active_uploads.pop(file_unique_id, None)
         if video_path and os.path.exists(video_path):
             try:
