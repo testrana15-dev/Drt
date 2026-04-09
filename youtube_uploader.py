@@ -225,7 +225,7 @@ class YouTubeUploader:
     def upload_video(self, file_path: str, title: str, description: str = "",
                      privacy: str = "unlisted", progress_queue=None, loop=None):
         if not self.accounts:
-            return None, None
+            return None, None, "no_accounts"
 
         account_ids = list(self.accounts.keys())
 
@@ -244,7 +244,7 @@ class YouTubeUploader:
 
             if status == "success":
                 logger.info(f"Upload success via account: {acc_id}")
-                return yt_link, yt_id
+                return yt_link, yt_id, "success"
 
             elif status == "limit_exceeded":
                 logger.warning(f"Account {acc_id} limit exceeded, trying next...")
@@ -255,4 +255,4 @@ class YouTubeUploader:
                 continue
 
         logger.error("All accounts exhausted!")
-        return None, None
+        return None, None, "all_failed"
