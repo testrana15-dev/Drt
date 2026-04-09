@@ -1,0 +1,12 @@
+*.session
+*.session-journal
+__pycache__/
+.cache/
+.pythonlibs/
+.local/
+.config/
+.upm/
+.replit
+yt_accounts/
+.git/
+.gitignore
