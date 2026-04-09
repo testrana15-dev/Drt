@@ -11,7 +11,7 @@ from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from pyrogram import Client, filters, idle
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.errors import FloodWait
 
 from youtube_uploader import YouTubeUploader
@@ -41,14 +41,13 @@ def set_bot_commands_via_api():
         {"command": "help",          "description": "Sare commands dekho"},
         {"command": "accounts",      "description": "Connected YT accounts dekho"},
         {"command": "addaccount",    "description": "Apna YouTube account add karo (Premium)"},
-        {"command": "removeaccount", "description": "YouTube account remove karo (Premium)"},
         {"command": "code",          "description": "Auth code submit karo"},
         {"command": "links",         "description": "Last 10 uploaded videos"},
         {"command": "search",        "description": "Video title se search karo"},
         {"command": "stats",         "description": "Bot ki total statistics"},
         {"command": "botstats",      "description": "Daily/Weekly/Monthly user stats"},
         {"command": "mypremium",     "description": "Apna premium status dekho"},
-        {"command": "contact",       "description": "Admin ko private message bhejo"},
+        {"command": "contact",       "description": "Premium lo ya admin se baat karo"},
         {"command": "addpremium",    "description": "User ko premium do (Admin only)"},
         {"command": "removepremium", "description": "User ka premium hato (Admin only)"},
         {"command": "premiumlist",   "description": "Sare premium users dekho (Admin only)"},
@@ -111,6 +110,9 @@ active_uploads = {}
 # Secret chat: admin_message_id -> user_id mapping
 contact_reply_map = {}
 
+# Contact flow state: user_id -> "premium" | "message"
+contact_state = {}
+
 
 def human_size(num):
     for unit in ["B", "KB", "MB", "GB"]:
@@ -145,15 +147,14 @@ async def register_user(message: Message):
     )
 
 
-def contact_info_text():
-    parts = ["**📩 Admin se contact karne ke 2 tarike hain:**\n"]
-    parts.append("**1️⃣ Bot ke zariye (Secret Message):**")
-    parts.append("`/contact Aapka message yahan likhein`")
-    parts.append("Admin ko seedha aapka message pahunch jaayega.\n")
+def contact_keyboard():
+    buttons = [
+        [InlineKeyboardButton("⭐ Premium Lena Hai (Free)", callback_data="contact_premium")],
+        [InlineKeyboardButton("💬 Kuch Aur Poochna Hai", callback_data="contact_message")],
+    ]
     if ADMIN_LINK:
-        parts.append("**2️⃣ Admin se directly baat karo:**")
-        parts.append(ADMIN_LINK)
-    return "\n".join(parts)
+        buttons.append([InlineKeyboardButton("📲 Admin se Seedha Baat Karo", url=ADMIN_LINK)])
+    return InlineKeyboardMarkup(buttons)
 
 
 # ══════════════════════════════════════
@@ -167,19 +168,23 @@ async def start_cmd(client, message: Message):
     is_premium = await db.is_premium_user(user_id)
     premium_badge = "⭐ Premium" if is_premium else "👤 Free"
 
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Premium Lena Hai (Free!)", callback_data="contact_premium")],
+        [InlineKeyboardButton("📊 My Status", callback_data="my_status")],
+    ])
     await message.reply_text(
         f"**🎬 YouTube Auto Uploader Bot**\n\n"
         f"Video bhejo → YouTube pe upload → Link milega!\n\n"
         f"**Formats:** MP4, MKV, WebM, AVI, MOV\n"
         f"**Mode:** Unlisted 🔒\n"
         f"**Multi-Account:** Auto-rotate ✅\n\n"
-        f"Caption = YouTube title 📌\n\n"
         f"**Aapka Status:** {premium_badge}\n\n"
-        f"/accounts — Connected accounts\n"
-        f"/links — Recent uploads\n"
-        f"/stats — Statistics\n"
-        f"/mypremium — Premium status\n"
-        f"/contact — Admin ko message karo"
+        f"⭐ **Premium bilkul FREE hai!**\n"
+        f"Sirf apna channel email admin ko bhejo → Premium milega!\n\n"
+        f"/contact — Premium lo ya kuch poochho\n"
+        f"/mypremium — Apna status\n"
+        f"/links — Recent uploads",
+        reply_markup=kb
     )
 
 
@@ -193,15 +198,17 @@ async def help_cmd(client, message: Message):
         "**📊 Data Commands**\n"
         "/links — Last 10 uploads\n"
         "/search TITLE — Video dhundho\n"
-        "/stats — Total stats\n\n"
+        "/stats — Total stats\n"
+        "/botstats — Detailed user stats\n\n"
         "**🎬 YouTube Account (Premium)**\n"
         "/addaccount NAME — Apna YT account add karo\n"
-        "/removeaccount NAME — Account remove karo\n"
         "/accounts — Sare accounts dekho\n"
         "/mypremium — Apna premium status\n\n"
+        "**⭐ Premium (Bilkul FREE!)**\n"
+        "Sirf /contact pe tap karo → Email share karo → Premium milega!\n\n"
         "**📩 Support**\n"
-        "/contact MESSAGE — Admin ko private message bhejo\n\n"
-        + contact_info_text()
+        "/contact — Premium lo ya admin se baat karo",
+        reply_markup=contact_keyboard()
     )
 
 
@@ -212,6 +219,9 @@ async def mypremium_cmd(client, message: Message):
     is_premium = await db.is_premium_user(user_id)
 
     if is_premium:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Premium Remove Karna Hai", callback_data="remove_premium_req")]
+        ])
         await message.reply_text(
             "**⭐ Aap Premium User hain!**\n\n"
             "✅ `/addaccount` se apna YouTube channel add kar sakte ho\n"
@@ -220,17 +230,16 @@ async def mypremium_cmd(client, message: Message):
             "1. `/addaccount APNA_NAAM` bhejo\n"
             "2. Auth link pe jao\n"
             "3. Google login karo\n"
-            "4. Code copy karke `/code NAAM CODE` bhejo"
+            "4. Code copy karke `/code NAAM CODE` bhejo",
+            reply_markup=kb
         )
     else:
         await message.reply_text(
             "**👤 Aap Free User hain**\n\n"
-            "❌ Apna YouTube channel abhi add nahi kar sakte.\n\n"
-            "**⭐ Premium lene ke liye:**\n"
-            "• Aapki Gmail Google Cloud Console mein add honi chahiye\n"
-            "• YouTube channel banana hoga\n"
-            "• Phone number verify hona chahiye\n\n"
-            + contact_info_text()
+            "⭐ **Premium bilkul FREE hai!**\n"
+            "Sirf apni Gmail ID share karo → Admin add kar dega!\n\n"
+            "Neeche button tap karo 👇",
+            reply_markup=contact_keyboard()
         )
 
 
@@ -241,46 +250,125 @@ async def mypremium_cmd(client, message: Message):
 @app.on_message(filters.command("contact"))
 async def contact_cmd(client, message: Message):
     await register_user(message)
-    user = message.from_user
-    user_id = user.id if user else 0
+    await message.reply_text(
+        "**📩 Admin se contact karo**\n\n"
+        "Neeche se option chunno 👇",
+        reply_markup=contact_keyboard()
+    )
 
-    parts = message.text.split(None, 1)
-    if len(parts) < 2:
-        await message.reply_text(
-            "**📩 Admin ko message kaise bhejein:**\n\n"
-            "`/contact Aapka message yahan likhein`\n\n"
-            "**Example:**\n"
-            "`/contact Mujhe premium chahiye, mera channel link hai: youtube.com/...`\n\n"
-            + (f"**Ya seedha admin se baat karo:** {ADMIN_LINK}" if ADMIN_LINK else "")
-        )
-        return
 
-    user_msg = parts[1].strip()
-    username = f"@{user.username}" if user and user.username else "N/A"
-    first_name = user.first_name if user else "Unknown"
-
+async def _forward_to_admin(client, user, user_msg: str, msg_type: str):
+    username = f"@{user.username}" if user.username else "N/A"
+    type_label = "⭐ Premium Request" if msg_type == "premium" else "💬 Message"
     try:
         sent = await client.send_message(
             OWNER_ID,
-            f"**📩 Naya Message (Secret Chat)**\n\n"
-            f"👤 **User:** {first_name}\n"
+            f"**📩 {type_label}**\n\n"
+            f"👤 **User:** {user.first_name}\n"
             f"🔗 **Username:** {username}\n"
-            f"🆔 **ID:** `{user_id}`\n\n"
+            f"🆔 **ID:** `{user.id}`\n\n"
             f"**💬 Message:**\n{user_msg}\n\n"
-            f"💡 _Iss message ko Telegram mein Reply karo — seedha user tak pahunch jayega!_\n"
-            f"_Ya use karo:_ `/reply {user_id} Aapka jawab`"
+            f"💡 _Reply karo iss message pe — seedha user tak pahunch jayega!_\n"
+            f"_Ya:_ `/reply {user.id} Jawab`"
         )
-        contact_reply_map[sent.id] = user_id
-        await message.reply_text(
-            "**✅ Aapka message admin ko pahunch gaya!**\n\n"
-            "Admin jald hi reply karenge.\n\n"
-            + (f"**Ya seedha baat karo:** {ADMIN_LINK}" if ADMIN_LINK else "")
-        )
+        contact_reply_map[sent.id] = user.id
+        return True
     except Exception as e:
-        logger.error(f"Contact forward error: {e}")
+        logger.error(f"Forward error: {e}")
+        return False
+
+
+@app.on_callback_query(filters.regex("^contact_premium$"))
+async def cb_contact_premium(client, callback: CallbackQuery):
+    user_id = callback.from_user.id
+    contact_state[user_id] = "premium"
+    await callback.message.edit_text(
+        "**⭐ Premium Request**\n\n"
+        "Apni **Gmail ID** bhejo jis se aap YouTube channel chalate ho.\n\n"
+        "**Example:** `yourname@gmail.com`\n\n"
+        "_Bas email type karo aur send karo_ 👇",
+    )
+    await callback.answer()
+
+
+@app.on_callback_query(filters.regex("^contact_message$"))
+async def cb_contact_message(client, callback: CallbackQuery):
+    user_id = callback.from_user.id
+    contact_state[user_id] = "message"
+    await callback.message.edit_text(
+        "**💬 Admin ko Message**\n\n"
+        "Apna message type karo aur send karo 👇\n\n"
+        "_Admin jald reply karenge._"
+    )
+    await callback.answer()
+
+
+@app.on_callback_query(filters.regex("^my_status$"))
+async def cb_my_status(client, callback: CallbackQuery):
+    user_id = callback.from_user.id
+    is_premium = await db.is_premium_user(user_id)
+    badge = "⭐ Premium" if is_premium else "👤 Free"
+    await callback.answer(f"Aapka status: {badge}", show_alert=True)
+
+
+@app.on_callback_query(filters.regex("^remove_premium_req$"))
+async def cb_remove_premium_req(client, callback: CallbackQuery):
+    user = callback.from_user
+    username = f"@{user.username}" if user.username else "N/A"
+    try:
+        await client.send_message(
+            OWNER_ID,
+            f"**❌ Premium Remove Request**\n\n"
+            f"👤 **User:** {user.first_name}\n"
+            f"🔗 **Username:** {username}\n"
+            f"🆔 **ID:** `{user.id}`\n\n"
+            f"Is user ka premium remove karne ke liye:\n"
+            f"`/removepremium {user.id}`"
+        )
+        await callback.answer("✅ Request bhej di gayi! Admin process karenge.", show_alert=True)
+    except Exception:
+        await callback.answer("❌ Request nahi gayi, dobara try karo.", show_alert=True)
+
+
+@app.on_message(filters.text & ~filters.command([
+    "start","help","mypremium","contact","addaccount","code","accounts",
+    "links","search","stats","botstats","reply","broadcast","addpremium",
+    "removepremium","premiumlist"
+]) & ~filters.user(OWNER_ID))
+async def handle_contact_reply(client, message: Message):
+    await register_user(message)
+    user_id = message.from_user.id if message.from_user else 0
+    state = contact_state.pop(user_id, None)
+    if not state:
+        return
+
+    user = message.from_user
+    user_text = message.text.strip()
+
+    if state == "premium":
+        full_msg = f"📧 Email: {user_text}\n\nMujhe premium chahiye."
+    else:
+        full_msg = user_text
+
+    success = await _forward_to_admin(client, user, full_msg, state)
+    if success:
+        if state == "premium":
+            await message.reply_text(
+                "**✅ Premium Request Admin ko pahunch gayi!**\n\n"
+                "Admin aapki Gmail ID verify karke premium add kar denge.\n"
+                "Aapko notification milega jab premium milega! 🎉\n\n"
+                + (f"**Ya seedha baat karo:** {ADMIN_LINK}" if ADMIN_LINK else "")
+            )
+        else:
+            await message.reply_text(
+                "**✅ Message admin ko pahunch gaya!**\n\n"
+                "Admin jald reply karenge.\n\n"
+                + (f"**Ya seedha baat karo:** {ADMIN_LINK}" if ADMIN_LINK else "")
+            )
+    else:
         await message.reply_text(
-            "❌ Message nahi bheja ja saka. Seedha admin se contact karo:\n\n"
-            + (ADMIN_LINK if ADMIN_LINK else "Admin se baat karo.")
+            "❌ Message nahi bheja ja saka.\n"
+            + (ADMIN_LINK if ADMIN_LINK else "Admin se seedha contact karo.")
         )
 
 
@@ -312,7 +400,7 @@ async def reply_user_cmd(client, message: Message):
         await message.reply_text(f"❌ Reply nahi bhej saka: `{e}`")
 
 
-@app.on_message(filters.user(OWNER_ID) & filters.reply & ~filters.command(["reply", "broadcast", "addpremium", "removepremium", "premiumlist", "addaccount", "removeaccount", "accounts", "links", "search", "stats", "start", "help", "contact", "code"]))
+@app.on_message(filters.user(OWNER_ID) & filters.reply & ~filters.command(["reply", "broadcast", "addpremium", "removepremium", "premiumlist", "addaccount", "accounts", "links", "search", "stats", "botstats", "start", "help", "contact", "code"]))
 async def admin_native_reply(client, message: Message):
     replied = message.reply_to_message
     if not replied:
@@ -549,37 +637,6 @@ async def code_cmd(client, message: Message):
             f"• YouTube channel bana hua hai?\n"
             f"• Phone number verify hai Google account mein?"
         )
-
-
-@app.on_message(filters.command("removeaccount"))
-async def remove_account_cmd(client, message: Message):
-    await register_user(message)
-    user_id = message.from_user.id if message.from_user else 0
-    is_owner = (user_id == OWNER_ID)
-    is_premium = await db.is_premium_user(user_id)
-
-    if not is_owner and not is_premium:
-        await message.reply_text("❌ Sirf premium users hi account remove kar sakte hain.")
-        return
-
-    parts = message.text.split(None, 1)
-    if len(parts) < 2:
-        await message.reply_text(
-            "**Usage:** `/removeaccount ACCOUNT_NAME`\n\n"
-            f"**Current accounts:**\n{youtube.get_accounts_status()}"
-        )
-        return
-
-    acc_name = parts[1].strip()
-    success = youtube.remove_account(acc_name)
-    if success:
-        await message.reply_text(
-            f"✅ Account `{acc_name}` remove ho gaya!\n\n"
-            f"Remaining: `{youtube.get_account_count()}`\n"
-            f"{youtube.get_accounts_status()}"
-        )
-    else:
-        await message.reply_text(f"❌ Account `{acc_name}` nahi mila.")
 
 
 @app.on_message(filters.command("accounts"))
