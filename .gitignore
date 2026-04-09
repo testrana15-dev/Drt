@@ -1,0 +1,10 @@
+client_secrets.json
+yt_accounts/
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+.cache/
+.pythonlibs/
+.local/
+.upm/
