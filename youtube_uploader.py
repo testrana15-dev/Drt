@@ -83,7 +83,6 @@ class YouTubeAccount:
                      privacy: str = "unlisted", progress_queue=None, loop=None):
         if not self.service:
             return None, None, "not_authenticated"
-
         try:
             file_size = os.path.getsize(file_path)
             body = {
@@ -135,14 +134,26 @@ class YouTubeAccount:
             return None, None, "no_id"
 
         except HttpError as e:
+            # ✅ FIX: Sahi quota error detection
+            try:
+                error_content = json.loads(e.content.decode("utf-8"))
+                errors = error_content.get("error", {}).get("errors", [{}])
+                reason = errors[0].get("reason", "") if errors else ""
+            except Exception:
+                reason = ""
+                error_content = {}
+
             error_str = str(e)
-            if "uploadLimitExceeded" in error_str:
-                logger.warning(f"Account {self.account_id} limit exceeded!")
+            if reason in ("quotaExceeded", "uploadLimitExceeded") or \
+               "quotaExceeded" in error_str or "uploadLimitExceeded" in error_str:
+                logger.warning(f"Account {self.account_id} quota exceeded!")
                 return None, None, "limit_exceeded"
-            logger.error(f"HTTP error: {e}")
+
+            logger.error(f"HTTP error account {self.account_id}: {e}")
             return None, None, "http_error"
+
         except Exception as e:
-            logger.error(f"Upload error: {e}")
+            logger.error(f"Upload error account {self.account_id}: {e}")
             return None, None, str(e)
 
 
@@ -205,7 +216,6 @@ class YouTubeUploader:
         if not acc:
             acc = YouTubeAccount(account_id)
             acc.get_auth_url()
-
         success = acc.authenticate_with_code(code)
         if success:
             self.accounts[account_id] = acc
@@ -228,11 +238,9 @@ class YouTubeUploader:
             return None, None, "no_accounts"
 
         account_ids = list(self.accounts.keys())
-
         for acc_id in account_ids:
             acc = self.accounts[acc_id]
             logger.info(f"Trying account: {acc_id}")
-
             yt_link, yt_id, status = acc.upload_video(
                 file_path=file_path,
                 title=title,
@@ -241,18 +249,16 @@ class YouTubeUploader:
                 progress_queue=progress_queue,
                 loop=loop
             )
-
             if status == "success":
                 logger.info(f"Upload success via account: {acc_id}")
                 return yt_link, yt_id, "success"
-
             elif status == "limit_exceeded":
                 logger.warning(f"Account {acc_id} limit exceeded, trying next...")
                 continue
-
             else:
                 logger.error(f"Account {acc_id} error: {status}")
                 continue
 
-        logger.error("All accounts exhausted!")
+        logger.error("All accounts exhausted or quota exceeded!")
         return None, None, "all_failed"
+
