@@ -4,8 +4,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 
-
 class Database:
+
     def __init__(self, uri: str):
         self.client = AsyncIOMotorClient(uri)
         self.db = self.client["yt_uploader_bot"]
@@ -13,12 +13,12 @@ class Database:
         self.premium_col = self.db["premium_users"]
         self.users_col = self.db["users"]
         self.pending_col = self.db["pending_uploads"]
-        # ✅ FIX: contact_reply_map ab MongoDB mein save hoga — restart pe nahi jayega
-        self.reply_map_col = self.db["admin_reply_map"]
         logger.info("MongoDB connected!")
 
     # ── Videos ──────────────────────────────────────────
-    async def save_video(self, title, caption, yt_link, yt_id, size_mb, user_id, username):
+
+    async def save_video(self, title, caption, yt_link, yt_id, size_mb, user_id, username, file_unique_id=""):
+        # ✅ UPDATED: file_unique_id field add kiya duplicate check ke liye
         doc = {
             "title": title,
             "caption": caption,
@@ -27,9 +27,17 @@ class Database:
             "size_mb": size_mb,
             "user_id": user_id,
             "username": username,
+            "file_unique_id": file_unique_id,  # ✅ NEW FIELD
             "uploaded_at": datetime.utcnow()
         }
         await self.col.insert_one(doc)
+
+    # ✅ NEW FUNCTION: Check karo kya yeh video pehle upload ho chuki hai
+    async def is_already_uploaded(self, file_unique_id: str) -> bool:
+        if not file_unique_id:
+            return False
+        doc = await self.col.find_one({"file_unique_id": file_unique_id})
+        return doc is not None
 
     async def get_recent_videos(self, limit=10):
         cursor = self.col.find().sort("uploaded_at", -1).limit(limit)
@@ -50,6 +58,7 @@ class Database:
         return result[0]["total"] if result else 0.0
 
     # ── Premium Users ────────────────────────────────────
+
     async def add_premium_user(self, user_id: int, username: str = ""):
         await self.premium_col.update_one(
             {"user_id": user_id},
@@ -70,6 +79,7 @@ class Database:
         return await cursor.to_list(length=100)
 
     # ── All Users (for broadcast) ────────────────────────
+
     async def save_user(self, user_id: int, username: str = "", first_name: str = ""):
         await self.users_col.update_one(
             {"user_id": user_id},
@@ -100,6 +110,7 @@ class Database:
         return await self.col.count_documents({"uploaded_at": {"$gte": since_dt}})
 
     # ── Pending Uploads (quota exceeded → retry next day) ──
+
     async def save_pending_upload(self, chat_id: int, message_id: int,
                                    title: str, caption: str,
                                    file_size: int, size_mb: float,
@@ -133,27 +144,3 @@ class Database:
 
     async def get_pending_count(self):
         return await self.pending_col.count_documents({})
-
-    # ── ✅ FIX: Admin Reply Map — MongoDB mein persist hoga ──
-    async def save_reply_map(self, admin_msg_id: int, user_id: int):
-        """Admin ka forwarded message ID → original user ID mapping save karo"""
-        await self.reply_map_col.update_one(
-            {"admin_msg_id": admin_msg_id},
-            {"$set": {
-                "admin_msg_id": admin_msg_id,
-                "user_id": user_id,
-                "saved_at": datetime.utcnow()
-            }},
-            upsert=True
-        )
-
-    async def get_reply_map_user(self, admin_msg_id: int):
-        """Admin message ID se user ID nikalo"""
-        doc = await self.reply_map_col.find_one({"admin_msg_id": admin_msg_id})
-        return doc["user_id"] if doc else None
-
-    async def cleanup_old_reply_maps(self, days: int = 7):
-        """Purane reply maps clean karo (7 din se purane)"""
-        from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(days=days)
-        await self.reply_map_col.delete_many({"saved_at": {"$lt": cutoff}})
