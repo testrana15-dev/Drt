@@ -1429,7 +1429,10 @@ async def premium_list_cmd(client, message: Message):
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
-    await register_user(message)
+    try:
+        await register_user(message)
+    except Exception:
+        pass
     user_id    = message.from_user.id if message.from_user else 0
     is_premium = await db.is_premium_user(user_id)
     badge      = "⭐ Premium" if is_premium else "👤 Free"
