@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Optional, List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class Database:
         }
         await self.col.insert_one(doc)
 
-    async def is_duplicate(self, file_unique_id: str, caption: str) -> dict | None:
+    async def is_duplicate(self, file_unique_id: str, caption: str) -> Optional[Dict]:
         """
         Returns the existing video doc if duplicate found, else None.
         Checks both file_unique_id AND caption (either match = duplicate).
@@ -189,11 +190,11 @@ class Database:
             upsert=True,
         )
 
-    async def get_yt_token(self, account_name: str) -> dict | None:
+    async def get_yt_token(self, account_name: str) -> Optional[Dict]:
         doc = await self.db["yt_tokens"].find_one({"account_name": account_name})
         return doc["token"] if doc else None
 
-    async def get_all_yt_tokens(self) -> list:
+    async def get_all_yt_tokens(self) -> List[Dict]:
         cursor = self.db["yt_tokens"].find()
         return await cursor.to_list(length=100)
 
