@@ -50,7 +50,7 @@ def start_health_server():
 
 # ============ CLIENT ============
 app = Client(
-    "railway_session",
+    "yt_uploader_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
@@ -1429,10 +1429,7 @@ async def premium_list_cmd(client, message: Message):
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
-    try:
-        await register_user(message)
-    except Exception:
-        pass
+    await register_user(message)
     user_id    = message.from_user.id if message.from_user else 0
     is_premium = await db.is_premium_user(user_id)
     badge      = "⭐ Premium" if is_premium else "👤 Free"
