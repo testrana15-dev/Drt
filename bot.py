@@ -5,13 +5,12 @@ import time
 import tempfile
 import shutil
 import json
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from pyrogram import Client, filters, idle
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BotCommand
 from pyrogram.errors import FloodWait
 
 from youtube_uploader import YouTubeUploader
@@ -124,40 +123,36 @@ def contact_keyboard():
         btns.append([InlineKeyboardButton("📲 Admin se Seedha Baat Karo", url=ADMIN_LINK)])
     return InlineKeyboardMarkup(btns)
 
-def set_bot_commands_via_api():
+async def set_bot_commands_via_pyrogram():
+    """Sets bot commands using Pyrogram's native method for cleaner code."""
     cmds = [
-        {"command": "start",         "description": "Bot shuru karo"},
-        {"command": "help",          "description": "Sare commands dekho"},
-        {"command": "check",         "description": "Videos upload hain ya nahi check karo"},
-        {"command": "checkdone",     "description": "Check mode band karo, result dekho"},
-        {"command": "accounts",      "description": "Connected YT accounts dekho"},
-        {"command": "addaccount",    "description": "Apna YouTube account add karo (Premium)"},
-        {"command": "code",          "description": "Auth code submit karo"},
-        {"command": "links",         "description": "Last 10 uploaded videos"},
-        {"command": "search",        "description": "Video title se search karo"},
-        {"command": "stats",         "description": "Bot ki total statistics"},
-        {"command": "botstats",      "description": "Daily/Weekly/Monthly user stats"},
-        {"command": "mypremium",     "description": "Apna premium status dekho"},
-        {"command": "contact",       "description": "Premium lo ya admin se baat karo"},
-        {"command": "retry",         "description": "Pending uploads manually retry karo"},
-        {"command": "pending",       "description": "Pending uploads dekho (Admin)"},
-        {"command": "addpremium",    "description": "User ko premium do (Admin)"},
-        {"command": "removepremium", "description": "User ka premium hato (Admin)"},
-        {"command": "premiumlist",   "description": "Sare premium users (Admin)"},
-        {"command": "broadcast",     "description": "Sab users ko message bhejo (Admin)"},
-        {"command": "reply",         "description": "User ko jawab bhejo (Admin)"},
-        {"command": "stop",          "description": "Saare uploads band karo (Admin)"},
-        {"command": "resume",        "description": "Uploads dobara shuru karo (Admin)"},
-        {"command": "clearquota",    "description": "YouTube quota flag reset karo (Admin)"},
+        BotCommand("start", "Bot shuru karo"),
+        BotCommand("help", "Sare commands dekho"),
+        BotCommand("check", "Videos upload hain ya nahi check karo"),
+        BotCommand("checkdone", "Check mode band karo, result dekho"),
+        BotCommand("accounts", "Connected YT accounts dekho"),
+        BotCommand("addaccount", "Apna YouTube account add karo (Premium)"),
+        BotCommand("code", "Auth code submit karo"),
+        BotCommand("links", "Last 10 uploaded videos"),
+        BotCommand("search", "Video title se search karo"),
+        BotCommand("stats", "Bot ki total statistics"),
+        BotCommand("botstats", "Daily/Weekly/Monthly user stats"),
+        BotCommand("mypremium", "Apna premium status dekho"),
+        BotCommand("contact", "Premium lo ya admin se baat karo"),
+        BotCommand("retry", "Pending uploads manually retry karo"),
+        BotCommand("pending", "Pending uploads dekho (Admin)"),
+        BotCommand("addpremium", "User ko premium do (Admin)"),
+        BotCommand("removepremium", "User ka premium hato (Admin)"),
+        BotCommand("premiumlist", "Sare premium users (Admin)"),
+        BotCommand("broadcast", "Sab users ko message bhejo (Admin)"),
+        BotCommand("reply", "User ko jawab bhejo (Admin)"),
+        BotCommand("stop", "Saare uploads band karo (Admin)"),
+        BotCommand("resume", "Uploads dobara shuru karo (Admin)"),
+        BotCommand("clearquota", "YouTube quota flag reset karo (Admin)"),
     ]
-    url  = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyCommands"
-    data = json.dumps({"commands": cmds}).encode()
-    req  = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        resp   = urllib.request.urlopen(req)
-        result = json.loads(resp.read())
-        if result.get("ok"):
-            logger.info("✅ Commands menu set ho gaya!")
+        await app.set_bot_commands(cmds)
+        logger.info("✅ Commands menu set ho gaya!")
     except Exception as e:
         logger.error(f"Commands API error: {e}")
 
@@ -194,7 +189,6 @@ async def update_progress_pin(chat_id: int, current_title: str = ""):
     if current_title:
         info["current"] = current_title
 
-    # Single video ke liye pin nahi (sirf bulk pe)
     if info["total"] <= 1:
         return
 
@@ -243,18 +237,10 @@ async def finish_progress_pin(chat_id: int):
 # ══════════════════════════════════════════════════════════
 
 async def handle_quota_exceeded():
-    """
-    Jaise hi quota khatam ho:
-    1. quota_exceeded flag set karo (DB + memory)
-    2. Queue mein jo bhi hai unhe pending mein save karo
-    3. Owner ko notify karo
-    4. Batao ki 2 PM IST pe auto retry hoga
-    """
     global quota_exceeded
     quota_exceeded = True
     await db.set_setting("quota_exceeded", True)
 
-    # Queue drain kar ke pending mein save karo
     saved = 0
     while not upload_queue.empty():
         try:
@@ -301,7 +287,6 @@ async def handle_quota_exceeded():
 # ══════════════════════════════════════════════════════════
 
 async def retry_pending_uploads(triggered_by: int = None):
-    """Pending uploads ko queue mein daalo."""
     global quota_exceeded, stop_flag
 
     pending = await db.get_pending_uploads()
@@ -340,12 +325,10 @@ async def retry_pending_uploads(triggered_by: int = None):
         file_uid   = doc.get("file_unique_id", "")
         doc_id     = doc["_id"]
 
-        # Already active mein hai?
         if file_uid and file_uid in active_uploads:
             continue
 
         try:
-            # Original message se video phir se bhejne ki koshish
             msg = await app.get_messages(chat_id, message_id)
             if not msg or (not msg.video and not msg.document):
                 await db.delete_pending_upload(doc_id)
@@ -354,7 +337,6 @@ async def retry_pending_uploads(triggered_by: int = None):
             await db.delete_pending_upload(doc_id)
             continue
 
-        # Progress tracking
         if chat_id not in chat_progress:
             chat_progress[chat_id] = {
                 "total": 0, "done": 0, "failed": 0,
@@ -377,7 +359,7 @@ async def retry_pending_uploads(triggered_by: int = None):
         await asyncio.sleep(0.1)
 
 # ══════════════════════════════════════════════════════════
-# AUTO RETRY SCHEDULER (2 PM IST daily)
+# AUTO RETRY SCHEDULER
 # ══════════════════════════════════════════════════════════
 
 async def auto_retry_scheduler():
@@ -409,11 +391,9 @@ async def process_upload(client, message: Message, status_msg,
     global stop_flag, quota_exceeded
     chat_id = message.chat.id
 
-    # Stop / quota check
     if stop_flag or quota_exceeded:
         reason = "Admin ne uploads band kar diye" if stop_flag else "YouTube quota khatam"
         active_uploads.pop(file_unique_id, None)
-        # Save to pending
         await db.save_pending_upload(
             chat_id=chat_id, message_id=message.id, title=title, caption=caption,
             file_size=file_size, size_mb=size_mb,
@@ -440,7 +420,6 @@ async def process_upload(client, message: Message, status_msg,
     dl_start   = time.time()
     last_edit  = [0.0]
 
-    # Update progress pin with current video
     await update_progress_pin(chat_id, title)
 
     async def download_progress(current, total):
@@ -539,7 +518,7 @@ async def process_upload(client, message: Message, status_msg,
         ul_time  = time.time() - ul_start
         ul_speed = file_size / ul_time if ul_time > 0 else 0
 
-        # ── SUCCESS ──
+        # SUCCESS
         if yt_link:
             await db.save_video(
                 title=title, caption=caption, yt_link=yt_link, yt_id=yt_id,
@@ -562,9 +541,8 @@ async def process_upload(client, message: Message, status_msg,
                 f"💾 MongoDB me save ✅"
             )
 
-        # ── QUOTA EXCEEDED ──
+        # QUOTA EXCEEDED
         elif status == "quota_exceeded":
-            # Pehle is video ko pending mein save karo
             await db.save_pending_upload(
                 chat_id=chat_id, message_id=message.id, title=title, caption=caption,
                 file_size=file_size, size_mb=size_mb,
@@ -589,11 +567,9 @@ async def process_upload(client, message: Message, status_msg,
                 f"▶️ **Manual retry:** `/retry`\n\n"
                 f"_Queue mein baaki sab bhi rok diye gaye hain._"
             )
-
-            # Baki queue bhi rok do
             await handle_quota_exceeded()
 
-        # ── OTHER ERROR ──
+        # OTHER ERROR
         else:
             await db.save_pending_upload(
                 chat_id=chat_id, message_id=message.id, title=title, caption=caption,
@@ -623,8 +599,6 @@ async def process_upload(client, message: Message, status_msg,
             pass
     finally:
         active_uploads.pop(file_unique_id, None)
-
-        # Cleanup files
         if video_path and os.path.exists(video_path):
             try:
                 os.remove(video_path)
@@ -632,10 +606,7 @@ async def process_upload(client, message: Message, status_msg,
                 pass
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # Progress pin update
         await update_progress_pin(chat_id)
-
-        # Agar queue khatam ho gayi is chat ke liye
         if chat_id in chat_progress:
             info      = chat_progress[chat_id]
             completed = info["done"] + info["failed"]
@@ -676,7 +647,6 @@ async def handle_video(client, message: Message):
 
     user_id = message.from_user.id if message.from_user else 0
 
-    # ── CHECK MODE ─────────────────────────────────────────
     if user_id in check_mode:
         caption        = message.caption or ""
         file_unique_id = getattr(file, "file_unique_id", "") or str(message.id)
@@ -693,7 +663,6 @@ async def handle_video(client, message: Message):
         )
         return
 
-    # ── DOCUMENT TYPE CHECK ────────────────────────────────
     if message.document:
         mime  = getattr(file, "mime_type", "") or ""
         fname = getattr(file, "file_name",  "") or ""
@@ -702,7 +671,6 @@ async def handle_video(client, message: Message):
             await message.reply_text("❌ Sirf video files bhejo (MP4, MKV, etc.)")
             return
 
-    # ── ACCOUNTS CHECK ─────────────────────────────────────
     if youtube.get_account_count() == 0:
         await message.reply_text(
             "❌ Koi YouTube account connected nahi hai!\n"
@@ -710,7 +678,6 @@ async def handle_video(client, message: Message):
         )
         return
 
-    # ── STOP / QUOTA CHECK ─────────────────────────────────
     if stop_flag:
         await message.reply_text(
             "🚫 **Uploads abhi band hain.**\n"
@@ -739,7 +706,6 @@ async def handle_video(client, message: Message):
     file_size      = getattr(file, "file_size", 0) or 0
     size_mb        = file_size / (1024 * 1024)
 
-    # ── DUPLICATE CHECK (caption + file_unique_id) ─────────
     dup = await db.is_duplicate(file_unique_id, caption)
     if dup:
         await message.reply_text(
@@ -750,7 +716,6 @@ async def handle_video(client, message: Message):
         )
         return
 
-    # ── ALREADY IN QUEUE? ─────────────────────────────────
     if file_unique_id in active_uploads:
         await message.reply_text(
             "⚠️ **Yeh video already queue mein hai!**\n"
@@ -758,7 +723,6 @@ async def handle_video(client, message: Message):
         )
         return
 
-    # ── PARSE TITLE FROM CAPTION ──────────────────────────
     title = ""
     if caption:
         for line in caption.splitlines():
@@ -771,7 +735,6 @@ async def handle_video(client, message: Message):
         fname = getattr(file, "file_name", "") or ""
         title = os.path.splitext(fname)[0] if fname else f"Video_{message.id}"
 
-    # ── QUEUE NUMBERING (per chat) ─────────────────────────
     chat_id = message.chat.id
     if chat_id not in chat_progress:
         chat_progress[chat_id] = {
@@ -781,7 +744,6 @@ async def handle_video(client, message: Message):
     chat_progress[chat_id]["total"] += 1
     queue_pos = chat_progress[chat_id]["total"]
 
-    # Queue size info
     q_size = upload_queue.qsize()
     active_count = len(active_uploads)
     wait_est = max(0, q_size + active_count - UPLOAD_WORKERS)
@@ -801,11 +763,10 @@ async def handle_video(client, message: Message):
         title, caption, file_size, size_mb,
     ))
 
-    # Progress pin update (sirf bulk ke liye)
     await update_progress_pin(chat_id)
 
 # ══════════════════════════════════════════════════════════
-# CHECK MODE COMMANDS
+# REST OF THE BOT COMMANDS (Left Intact)
 # ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("check"))
@@ -829,7 +790,7 @@ async def check_done_cmd(client, message: Message):
         return
 
     data    = check_mode.pop(user_id)
-    results = data["results"]   # [(ok:bool, caption:str, yt_link:str|None)]
+    results = data["results"]
 
     if not results:
         await message.reply_text("Koi video check nahi hua. Mode band kar diya.")
@@ -845,14 +806,12 @@ async def check_done_cmd(client, message: Message):
     )
     await message.reply_text(summary)
 
-    # Not uploaded ki numbered list alag message mein
     if not_uploaded:
         lines = ["**❌ Ye upload nahi hue (in captions ko upload karo):**\n"]
         for num, cap in not_uploaded:
             short = cap[:100].replace("\n", " ")
             lines.append(f"{num}. `{short}`")
 
-        # Telegram 4096 char limit — split karo agar zyada ho
         chunk = ""
         for line in lines:
             if len(chunk) + len(line) + 1 > 4000:
@@ -863,7 +822,6 @@ async def check_done_cmd(client, message: Message):
         if chunk:
             await message.reply_text(chunk)
 
-    # Uploaded ki list (optional — short)
     if uploaded:
         lines = ["**✅ Ye already uploaded hain:**\n"]
         for num, cap, link in uploaded:
@@ -879,15 +837,10 @@ async def check_done_cmd(client, message: Message):
         if chunk:
             await message.reply_text(chunk)
 
-# ══════════════════════════════════════════════════════════
-# RETRY COMMAND
-# ══════════════════════════════════════════════════════════
-
 @app.on_message(filters.command("retry"))
 async def retry_cmd(client, message: Message):
     await register_user(message)
     user_id = message.from_user.id
-    # Sirf owner ya pending wala user
     if user_id != OWNER_ID:
         pending_count = await db.get_pending_count()
         if pending_count == 0:
@@ -910,10 +863,6 @@ async def retry_cmd(client, message: Message):
         f"_(Quota check hoga — agar abhi bhi khatam hai to dobara pending ho jaayenge)_"
     )
     await retry_pending_uploads(triggered_by=user_id)
-
-# ══════════════════════════════════════════════════════════
-# PENDING COMMAND
-# ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("pending") & filters.user(OWNER_ID))
 async def pending_cmd(client, message: Message):
@@ -954,10 +903,6 @@ async def cb_clear_pending(client, callback: CallbackQuery):
     await callback.answer(f"✅ {deleted} pending clear ho gaye.", show_alert=True)
     await callback.message.edit_text(f"🗑 `{deleted}` pending uploads clear kar diye.")
 
-# ══════════════════════════════════════════════════════════
-# STOP / RESUME / CLEARQUOTA (OWNER ONLY)
-# ══════════════════════════════════════════════════════════
-
 @app.on_message(filters.command("stop") & filters.user(OWNER_ID))
 async def stop_cmd(client, message: Message):
     global stop_flag
@@ -987,10 +932,6 @@ async def clearquota_cmd(client, message: Message):
         "Ab naye uploads ho sakenge.\n"
         "Pending ke liye `/retry` karo."
     )
-
-# ══════════════════════════════════════════════════════════
-# YOUTUBE ACCOUNT MANAGEMENT
-# ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("addaccount"))
 async def add_account_cmd(client, message: Message):
@@ -1052,7 +993,6 @@ async def code_cmd(client, message: Message):
 
     success = youtube.finish_auth(acc_name, code)
     if success:
-        # Token MongoDB mein save karo (Railway restart safe)
         try:
             token_data = youtube.get_token_data(acc_name)
             await db.save_yt_token(acc_name, token_data)
@@ -1084,10 +1024,6 @@ async def accounts_cmd(client, message: Message):
         f"**Total:** `{count}` accounts\n"
         f"**Daily Limit:** ~`{daily_lim}` videos/day"
     )
-
-# ══════════════════════════════════════════════════════════
-# STATS COMMANDS
-# ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("links"))
 async def links_cmd(client, message: Message):
@@ -1181,10 +1117,6 @@ async def botstats_cmd(client, message: Message):
         f"**⭐ Premium Users: `{premium_count}`**"
     )
 
-# ══════════════════════════════════════════════════════════
-# CONTACT / SECRET CHAT
-# ══════════════════════════════════════════════════════════
-
 @app.on_message(filters.command("contact"))
 async def contact_cmd(client, message: Message):
     await register_user(message)
@@ -1259,7 +1191,6 @@ async def cb_remove_premium_req(client, callback: CallbackQuery):
     except Exception:
         await callback.answer("❌ Request nahi gayi, dobara try karo.", show_alert=True)
 
-# Text handler for contact flow (non-command user messages)
 _ignored_commands = [
     "start","help","mypremium","contact","addaccount","code","accounts",
     "links","search","stats","botstats","reply","broadcast","addpremium",
@@ -1294,10 +1225,6 @@ async def handle_contact_reply(client, message: Message):
     else:
         reply = "❌ Message nahi bheja ja saka.\n" + (ADMIN_LINK if ADMIN_LINK else "")
     await message.reply_text(reply)
-
-# ══════════════════════════════════════════════════════════
-# ADMIN REPLY TO USER
-# ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("reply") & filters.user(OWNER_ID))
 async def reply_user_cmd(client, message: Message):
@@ -1337,10 +1264,6 @@ async def admin_native_reply(client, message: Message):
     except Exception as e:
         await message.reply_text(f"❌ Deliver nahi hui: `{e}`")
 
-# ══════════════════════════════════════════════════════════
-# BROADCAST
-# ══════════════════════════════════════════════════════════
-
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 async def broadcast_cmd(client, message: Message):
     parts = message.text.split(None, 1)
@@ -1367,10 +1290,6 @@ async def broadcast_cmd(client, message: Message):
         f"**✅ Broadcast Complete!**\n\n"
         f"✅ Bheja: `{success}`\n❌ Failed: `{failed}`\n📊 Total: `{len(user_ids)}`"
     )
-
-# ══════════════════════════════════════════════════════════
-# PREMIUM MANAGEMENT
-# ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("addpremium") & filters.user(OWNER_ID))
 async def add_premium_cmd(client, message: Message):
@@ -1422,10 +1341,6 @@ async def premium_list_cmd(client, message: Message):
         uname = f"@{u.get('username','')}" if u.get("username") else "N/A"
         text += f"• `{u['user_id']}` — {uname}\n"
     await message.reply_text(text)
-
-# ══════════════════════════════════════════════════════════
-# START COMMAND
-# ══════════════════════════════════════════════════════════
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
@@ -1498,21 +1413,18 @@ async def mypremium_cmd(client, message: Message):
 async def main():
     global quota_exceeded
 
-    # Health server thread
     Thread(target=start_health_server, daemon=True).start()
-
-    # Bot commands menu set karo
-    set_bot_commands_via_api()
 
     await app.start()
     logger.info("✅ Bot start ho gaya!")
+    
+    # Using Pyrogram's proper command setup after client starts
+    await set_bot_commands_via_pyrogram()
 
-    # DB se quota flag restore karo (restart safe)
     quota_exceeded = await db.get_setting("quota_exceeded", False)
     if quota_exceeded:
         logger.warning("⚠️ Quota exceeded flag DB se restore hua")
 
-    # Load YT tokens from MongoDB (Railway restart safe)
     try:
         all_tokens = await db.get_all_yt_tokens()
         for tok in all_tokens:
@@ -1521,11 +1433,9 @@ async def main():
     except Exception as e:
         logger.error(f"Token load error: {e}")
 
-    # Upload workers launch karo
     for i in range(UPLOAD_WORKERS):
         asyncio.create_task(upload_worker(i + 1))
 
-    # Auto retry scheduler (2 PM IST daily)
     asyncio.create_task(auto_retry_scheduler())
 
     logger.info(f"✅ {UPLOAD_WORKERS} upload workers + auto-retry scheduler ready")
