@@ -7,11 +7,7 @@ logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self, uri: str):
-        self.client = AsyncIOMotorClient(
-    mongo_uri,
-    serverSelectionTimeoutMS=5000,
-    connectTimeoutMS=5000
-        )
+        self.client = AsyncIOMotorClient(uri)
         self.db = self.client["yt_uploader_bot"]
         self.col = self.db["videos"]
         self.premium_col = self.db["premium_users"]
