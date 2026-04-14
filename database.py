@@ -7,7 +7,13 @@ logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self, uri: str):
-        self.client = AsyncIOMotorClient(uri)
+        self.client = AsyncIOMotorClient(
+    uri,
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=20000,
+    retryWrites=True
+        )
         self.db = self.client["yt_uploader_bot"]
         self.col = self.db["videos"]
         self.premium_col = self.db["premium_users"]
